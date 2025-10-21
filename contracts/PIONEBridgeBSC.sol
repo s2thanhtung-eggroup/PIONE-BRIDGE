@@ -2,12 +2,10 @@
 pragma solidity ^0.8.28;
 
 /**
- * @title PIONE Bridge
- * @dev Cross-chain bridge for native tokens (PIO).
+ * @title PIONE Bridge BSC
+ * @dev Cross-chain bridge for PIO tokens with role-based access control
  * 
  * Features:
- * - Lock native tokens on source chain
- * - Release native tokens on target chain
  * - Role-based access control (Admin, Operator)
  * - Configurable limits
  * - Emergency pause mechanism
@@ -21,15 +19,18 @@ pragma solidity ^0.8.28;
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IPIONE} from "./interfaces/IPIONE.sol";
 
-contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
+contract PIONEBridgeBSC is AccessControl, Pausable, ReentrancyGuard {
     // Role used to authorize off-chain operators who can finalize incoming
-    // cross-chain requests (i.e. release tokens on this chain after verification).
+    // cross-chain requests (i.e. mint tokens on this chain).
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     
+    IPIONE public pioToken;
     uint public immutable CHAIN_ID;
 
-    // Map of chain IDs that are allowed as bridge targets/sources.
+    // Map of chain IDs that are allowed as bridge targets.
     mapping(uint => bool) public supportedChains;
 
     // Transfer limit configuration (can be 0 to disable a check):
@@ -46,16 +47,10 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     // Nonce management per user to ensure uniqueness of outgoing requests
     mapping(address => uint) private _userNonces;
 
-    // Record of processed incoming requests to guarantee idempotence and
-    // prevent double-releasing. A requestId is marked `true` once handled.
+    // Record of processed incoming requests to guarantee idempotence.
     mapping(bytes32 => bool) private _processedTransactions;
 
-    // Track total locked native tokens in the bridge
-    uint public totalLocked;
-
-    // Canonical representation of an incoming bridge request. This struct
-    // carries the minimal set of fields needed to validate and release the
-    // requested amount on the target chain.
+    // Canonical representation of an incoming bridge request.
     struct BridgeRequest {
         address from;
         address to;
@@ -65,11 +60,11 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
         uint nonce;
     }
 
-    // Emitted when a user initiates a cross-chain transfer (lock on this
+    // Emitted when a user initiates a cross-chain transfer (burn on this
     // chain). Consumers can index `requestId` to follow the lifecycle.
     event BridgeInitiated(bytes32 indexed requestId, address indexed from, address indexed to, uint amount, uint sourceChain, uint targetChain, uint nonce);
 
-    // Emitted when an incoming transfer is completed (native tokens released to the recipient on this chain).
+    // Emitted when an incoming transfer is completed (tokens minted to the recipient on this chain).
     event BridgeCompleted(bytes32 indexed requestId, address indexed to, uint amount, uint targetChain);
 
     // Emitted when admin updates supported chain status.
@@ -77,12 +72,6 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
 
     // Emitted when transfer policy limits are updated by an admin.
     event TransferLimitsUpdated(uint minAmount, uint maxAmount, uint dailyLimit);
-
-    // Emitted when admin deposits native tokens to the bridge for liquidity
-    event LiquidityAdded(address indexed provider, uint amount);
-
-    // Emitted when admin withdraws native tokens from the bridge
-    event LiquidityWithdrawn(address indexed recipient, uint amount);
     
     // ============ Errors ============
     /// @notice Emitted when a transfer amount is outside configured bounds
@@ -93,11 +82,14 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     error InvalidRequest();
     
     constructor(
+        address _pioToken,
         uint _minTransferAmount,
         uint _maxTransferAmount,
         uint _dailyLimit,
         uint _chainSupport
     ) {
+        require(_pioToken != address(0), "Invalid token address");
+        pioToken = IPIONE(_pioToken);
         CHAIN_ID = block.chainid;
         
         // Set default limits
@@ -113,17 +105,15 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     }
     
     /**
-     * @notice Initiate a cross-chain transfer by locking native tokens
+     * @notice Initiate a cross-chain transfer
      */
     function bridgeOut(
         address to,
+        uint amount,
         uint targetChain
-    ) external payable whenNotPaused nonReentrant returns (bytes32) {
+    ) external whenNotPaused nonReentrant returns (bytes32) {
         require(to != address(0), "Invalid recipient");
         require(supportedChains[targetChain], "Chain not supported");
-        require(msg.value > 0, "Amount must be greater than 0");
-        
-        uint amount = msg.value;
         
         // Check transfer limits
         if(minTransferAmount > 0 && amount < minTransferAmount) revert InvalidAmount();
@@ -143,15 +133,16 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
                 nonce
             )
         );
-        // Lock native tokens in the contract
-        totalLocked += amount;
+
+        // Burn tokens on the source chain. 
+        pioToken.crosschainBurn(_sender, amount);
         
         emit BridgeInitiated(requestId, _sender, to, amount, CHAIN_ID, targetChain, nonce);
         return requestId;
     }
     
     /**
-     * @notice Complete a cross-chain transfer by releasing native tokens
+     * @notice Complete a cross-chain transfer
      */
     function bridgeIn(
         BridgeRequest calldata request,
@@ -159,9 +150,7 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     ) external onlyRole(OPERATOR_ROLE) whenNotPaused nonReentrant {
         require(request.targetChain == CHAIN_ID, "Wrong target chain");
         require(!_processedTransactions[requestId], "Already processed");
-        require(address(this).balance >= request.amount, "Insufficient liquidity");
         
-        // Verify request ID
         bytes32 computedId = keccak256(
             abi.encodePacked(
                 request.from,
@@ -175,18 +164,12 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
         if(computedId != requestId) revert InvalidRequest();
         _processedTransactions[requestId] = true;
 
-        // Release native tokens to the recipient on this chain
-        totalLocked -= request.amount;
-        
-        (bool success, ) = payable(request.to).call{value: request.amount}("");
-        require(success, "Transfer failed");
+        // Mint tokens to the recipient on this chain. 
+        pioToken.crosschainMint(request.to, request.amount);
         
         emit BridgeCompleted(requestId, request.to, request.amount, CHAIN_ID);
     }
     
-    /**
-     * @dev Updates the stored per-day transferred total and enforces the configured daily limit.
-     */
     function _updateDailyTransferred(uint amount) internal {
         uint today = block.timestamp / 1 days;
         if (_lastTransferDay != today) {
@@ -233,34 +216,6 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     function processedTransactions(bytes32 _requestId) external view returns (bool) {
         return _processedTransactions[_requestId];
     }
-
-    /**
-     * @notice Add liquidity to the bridge
-     */
-    function addLiquidity() external payable onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(msg.value > 0, "Amount must be greater than 0");
-        totalLocked += msg.value;
-        emit LiquidityAdded(_msgSender(), msg.value);
-    }
-
-    /**
-     * @notice Withdraw liquidity from the bridge
-     */
-    function withdrawLiquidity(address payable to, uint amount) 
-        external 
-        onlyRole(DEFAULT_ADMIN_ROLE) 
-    {
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");   
-        require(address(this).balance >= amount, "Insufficient balance");
-        
-        totalLocked -= amount;
-        
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-        
-        emit LiquidityWithdrawn(to, amount);
-    }
     
     /**
      * @notice Pause bridge operations
@@ -296,20 +251,5 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
      */
     function getDailyTransferred() external view returns (uint) {
         return _dailyTransferred;
-    }
-
-    /**
-     * @notice Returns the current contract balance
-     */
-    function getBalance() external view returns (uint) {
-        return address(this).balance;
-    }
-
-    /**
-     * @notice Fallback function to receive native tokens
-     */
-    receive() external payable {
-        totalLocked += msg.value;
-        emit LiquidityAdded(_msgSender(), msg.value);
     }
 }

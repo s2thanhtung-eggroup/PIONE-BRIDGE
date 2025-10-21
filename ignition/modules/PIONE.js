@@ -5,10 +5,11 @@ const { buildModule } = require("@nomicfoundation/hardhat-ignition/modules");
 const { ethers } = require("hardhat");
 
 
-module.exports = buildModule("PIONECHAIN_modules", (m) => {
+module.exports = buildModule("PIONE_modules", (m) => {
   const signer = m.getAccount(0); // owner;
-  
-  const token = m.contract("PIONECHAIN", [signer]);
+
+  console.log('signer :>> ', signer);
+  const token = m.contract("PIONE", [signer]);
 
   return { token };
 });

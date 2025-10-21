@@ -1,26 +1,83 @@
-# PIONECHAIN Token
+# 🪩 PIONEBRIDGE
 
-This repository contains a Hardhat-based Solidity project for the Pione chain token and related smart contracts. It includes source contracts, build artifacts, tests, and Ignition deployment journals for example networks.
+**PIONEBRIDGE** is a cross-chain bridge between **BNB Smart Chain (BSC)** and **PioneChain**, enabling seamless and secure transfers of the **PIONE** token between networks.
 
-This README covers quick setup, common commands, where to find contracts and deployment artifacts, and notes for verification and testing.
-
-## Project contents
-
-- Contracts (source): `contracts/`
-	- `PIONECHAIN.sol` — main chain contract / module (project-specific)
-- Tests: `test/` (contains `PIONECHAIN.js` test file)
-- Ignition deployments: `ignition/deployments/` (includes example journals and deployed addresses for chains)
-- Artifacts and build outputs: `artifacts/`, `cache/`, and `build-info/`
-- Deployment helper: `scripts/verify.js` (single-file verification helper)
+The bridge operates under a **mint/burn** mechanism:
+- When transferring from **BSC → Pione**, tokens are **burned** on BSC and **release** on Pione.
+- When transferring from **Pione → BSC**, tokens are **lock** on Pione and **minted** back on BSC.
 
 ## Requirements
 
-- Node >= 20 (recommended) and npm/yarn
-- Hardhat (installed as a project dependency)
-- Optional: an Ethereum account mnemonic and RPC endpoints for public testnets/mainnet
+- Node.js ≥ 20 (recommended)
+- npm or yarn
+- RPC endpoints for both BSC and PioneChain
+- A valid private key in `.env` for deployment
 
 Install dependencies:
 
 ```bash
 npm install
 ```
+
+Fill in your configuration:
+
+PRIVATE_KEY=<YOUR_PRIVATE_KEY>
+INFURA_KEY=<BSC_RPC_URL>
+EXPLORER_API_KEY=<YOUR_API_KEY>
+PIONE_TOKEN=<PIONE_TOKEN_ADDRESS> (Optional - after deployed on BSC, using for Set up tokenBridge address and unpauseTokenBridge)
+PIONE_BRIDGE_BSC=<PIONEBRIDGE_BSC_ADDRESS> ((Optional - after deployed on BSC, using for Set up tokenBridge address and unpauseTokenBridge))
+
+## Testing 
+
+```bash
+npx hardhat test
+```
+
+
+### 0. (Optional) Deploy the PIONE Token:
+
+If the PIONE token has not been deployed yet, run:
+
+```bash
+npm run token:deploy-bsc
+```
+
+Record the deployed token address — it will be needed in the next step.
+
+
+### 1. Deploy PIONEBridgeBSC contract on BSC: 
+
+Deploy the bridge contract to BNB Smart Chain:
+require set: PIONE_TOKEN=<PIONE_TOKEN_ADDRESS> in .env before run
+
+```bash
+npm run deploy:bsc
+```
+**If verify fails, run one more time.**
+
+
+### 2. Deploy PIONEBridge contract on PioneChain:
+
+Deploy the bridge contract on PioneChain:
+
+```bash
+npm run deploy:pione
+```
+**If verify fails, run one more time.**
+
+
+### 3. Set up tokenBridge address and unpauseTokenBridge:
+
+Once both contracts are deployed, update your .env file:
+
+PIONE_TOKEN=<PIONE_TOKEN_ADDRESS> 
+PIONE_BRIDGE_BSC=<PIONEBRIDGE_BSC_ADDRESS> 
+
+Then run:
+```bash
+npm run token:action
+```
+
+This script will:
+- Assign Minter/Burner roles to the bridge contracts.
+- Unpause the bridge for active operation.

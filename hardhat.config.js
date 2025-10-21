@@ -54,5 +54,26 @@ module.exports = {
   },
   etherscan: {
     apiKey: EXPLORER_API_KEY,
-  }
+    // apiKey: {
+    //   pioneZero : EXPLORER_API_KEY
+    // },
+    customChains: [
+      {
+        network: "pione",
+        chainId: 5090,
+        urls: {
+          apiURL: "https://pionescan.com/api/",
+          browserURL: "https://pionescan.com/",
+        },
+      },
+      {
+        network: "pioneZero",
+        chainId: 5080,
+        urls: {
+          apiURL: "https://zeroscan.org/api/",
+          browserURL: "https://zeroscan.org/",
+        },
+      },
+    ]
+  },
 };

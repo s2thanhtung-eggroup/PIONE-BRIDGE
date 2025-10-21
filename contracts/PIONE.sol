@@ -12,7 +12,7 @@ pragma solidity ^0.8.28;
  * 
  * @company  Pione Group
  * @team     Pione Labs
- * @contact  info@pionegroup.com
+ * @contact  info@pionegroup.com    
  * 
  * @author   Pione Labs
  */
@@ -25,7 +25,7 @@ import {ERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/ERC20P
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 
-contract PIONECHAIN is
+contract PIONE is
     ERC20,
     ERC20Bridgeable,
     ERC20Burnable,
@@ -48,9 +48,9 @@ contract PIONECHAIN is
     constructor(
         address _initialOwner
     )
-        ERC20("PIONE CHAIN", "PIO")
+        ERC20("Pione", "PIO")
         Ownable(_initialOwner)
-        ERC20Permit("PIONE CHAIN")
+        ERC20Permit("Pione")
     {
         // Set to true by default during contract initialization to disable bridge operations
         _tokenBridgePaused = true;

@@ -1,11 +1,14 @@
 {
-  "name": "bep20-pionechain-token",
+  "name": "bep20-pionechain",
   "version": "1.0.0",
   "description": "build bep20 pione token on bnb smart chain",
   "main": "index.js",
   "scripts": {
     "test": "hardhat test",
-    "deploy:bsc": "hardhat ignition deploy ./ignition/modules/PIONECHAIN.js --network bsc --verify"
+    "deploy:bsc": "hardhat ignition deploy ./ignition/modules/PIONEBridgeBSC.js --network bsc --verify",
+    "deploy:pione": "hardhat ignition deploy ./ignition/modules/PIONEBridge.js --network pione --verify",
+    "token:deploy-bsc": "hardhat ignition deploy ./ignition/modules/PIONE.js --network bsc --verify",
+    "token:action": "npx hardhat run scripts/action/PIONE-token.js --network bsc --verify"
   },
   "keywords": [
     "PIONECHAIN",
@@ -13,7 +16,7 @@
     "PIO"
   ],
   "author": "pione labs",
-  "license": "GPL-3.0",
+  "license": "MIT",
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^6.1.0",
     "hardhat": "^2.26.1"

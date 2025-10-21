@@ -2,9 +2,9 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helpers");
 
-describe("PIONECHAIN", function () {
+describe("PIONE", function () {
   // Constants
-  const TOKEN_NAME = "PIONE CHAIN";
+  const TOKEN_NAME = "Pione";
   const TOKEN_SYMBOL = "PIO";
   const MAX_SUPPLY = ethers.parseEther("666666666");
 
@@ -14,7 +14,7 @@ describe("PIONECHAIN", function () {
   async function deployPioneTokenFixture() {
     const [owner, bridge, user1, user2, attacker] = await ethers.getSigners();
 
-    const PioneToken = await ethers.getContractFactory("PIONECHAIN");
+    const PioneToken = await ethers.getContractFactory("PIONE");
     const token = await PioneToken.deploy(owner.address);
 
     return { token, owner, bridge, user1, user2, attacker };
