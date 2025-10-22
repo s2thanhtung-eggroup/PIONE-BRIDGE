@@ -75,7 +75,7 @@ contract PIONEBridgeBSC is AccessControl, Pausable, ReentrancyGuard {
     
     // ============ Errors ============
     /// @notice Emitted when a transfer amount is outside configured bounds
-    error InvalidAmount();
+    error InvalidAmount(uint minAmount, uint maxAmount, uint bridgeOutAmount);
     /// @notice Emitted when the operation would exceed the configured daily aggregate limit
     error DailyLimitExceeded();
     /// @notice Emitted when the provided bridge request data is malformed or does not match its id
@@ -116,8 +116,13 @@ contract PIONEBridgeBSC is AccessControl, Pausable, ReentrancyGuard {
         require(supportedChains[targetChain], "Chain not supported");
         
         // Check transfer limits
-        if(minTransferAmount > 0 && amount < minTransferAmount) revert InvalidAmount();
-        if(maxTransferAmount > 0 && amount > maxTransferAmount) revert InvalidAmount();
+        if (
+            (minTransferAmount > 0 && amount < minTransferAmount) ||
+            (maxTransferAmount > 0 && amount > maxTransferAmount)
+        ) {
+            revert InvalidAmount(minTransferAmount, maxTransferAmount, amount);
+        }
+        
         if(dailyLimit > 0) _updateDailyTransferred(amount);
         
         // Generate request ID

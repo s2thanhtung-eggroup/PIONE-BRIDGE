@@ -8,7 +8,7 @@
     "deploy:bsc": "hardhat ignition deploy ./ignition/modules/PIONEBridgeBSC.js --network bsc --verify",
     "deploy:pione": "hardhat ignition deploy ./ignition/modules/PIONEBridge.js --network pione --verify",
     "token:deploy-bsc": "hardhat ignition deploy ./ignition/modules/PIONE.js --network bsc --verify",
-    "token:action": "npx hardhat run scripts/action/PIONE-token.js --network bsc --verify"
+    "token:action": "npx hardhat run scripts/action/PIONE-token.js --network bsc"
   },
   "keywords": [
     "PIONECHAIN",

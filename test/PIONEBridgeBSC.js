@@ -264,16 +264,12 @@ describe("PIONEBridgeBSC", function () {
       const halfLimit = dailyLimit / 2n;
 
       const balance = await pioToken.balanceOf(user1.address)
-      console.log('halfLimit :>> ', ethers.formatEther(halfLimit));
-      console.log('balanceBefore :>> ', ethers.formatEther(balance));
 
       await bridge.connect(user1).bridgeOut(user1.address, halfLimit, BSC_CHAIN_ID);
       const balance1 = await pioToken.balanceOf(user1.address)
-      console.log('balance 1 :>> ', ethers.formatEther(balance1));
 
       await bridge.connect(user1).bridgeOut(user1.address, halfLimit, BSC_CHAIN_ID);
       const balance2 = await pioToken.balanceOf(user1.address)
-      console.log('balance 2 :>> ', ethers.formatEther(balance2));
       
       // Should revert on next transfer
       await expect(

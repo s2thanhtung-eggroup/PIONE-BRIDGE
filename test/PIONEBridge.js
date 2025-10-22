@@ -13,7 +13,7 @@ describe("PIONEBridge", function () {
 
         // Deploy native bridge
         const minTransfer = ethers.parseEther("0.01"); // 0.01 PIO
-        const maxTransfer = ethers.parseEther("500"); // 100 PIO
+        const maxTransfer = ethers.parseEther("500"); // 500 PIO
         const dailyLimit = ethers.parseEther("1000"); // 1000 PIO
 
         const Bridge = await ethers.getContractFactory("PIONEBridge");
@@ -24,6 +24,7 @@ describe("PIONEBridge", function () {
             BSC_TESTNET_ID
         );
         await bridge.waitForDeployment();
+        await bridge.unpause();
 
         // Setup supported chains
         const ETH_CHAIN_ID = 1;
@@ -32,7 +33,9 @@ describe("PIONEBridge", function () {
 
         // Add initial liquidity to bridge for testing bridgeIn
         const initialLiquidity = ethers.parseEther("500");
-        await bridge.addLiquidity({ value: initialLiquidity });
+        
+        await bridge.connect(owner).bridgeOut(owner.address, BSC_CHAIN_ID, { value: initialLiquidity });
+        // await bridge.addLiquidity({ value: initialLiquidity });
 
         return {
             bridge,
@@ -76,78 +79,7 @@ describe("PIONEBridge", function () {
 
         it("Should have initial liquidity", async function () {
             const { bridge, initialLiquidity } = await loadFixture(deployBridgeFixture);
-            expect(await bridge.getBalance()).to.equal(initialLiquidity);
-            expect(await bridge.totalLocked()).to.equal(initialLiquidity);
-        });
-    });
-
-    describe("Liquidity Management", function () {
-        it("Should allow admin to add liquidity", async function () {
-            const { bridge, owner } = await loadFixture(deployBridgeFixture);
-            const amount = ethers.parseEther("10");
-
-            await expect(bridge.connect(owner).addLiquidity({ value: amount }))
-                .to.emit(bridge, "LiquidityAdded")
-                .withArgs(owner.address, amount);
-
-            expect(await bridge.getBalance()).to.be.greaterThanOrEqual(amount);
-        });
-
-        it("Should allow admin to withdraw liquidity", async function () {
-            const { bridge, owner, user1 } = await loadFixture(deployBridgeFixture);
-            const amount = ethers.parseEther("10");
-
-            const balanceBefore = await ethers.provider.getBalance(user1.address);
-
-            await expect(bridge.connect(owner).withdrawLiquidity(user1.address, amount))
-                .to.emit(bridge, "LiquidityWithdrawn")
-                .withArgs(user1.address, amount);
-
-            const balanceAfter = await ethers.provider.getBalance(user1.address);
-            expect(balanceAfter - balanceBefore).to.equal(amount);
-        });
-
-        it("Should not allow non-admin to add liquidity", async function () {
-            const { bridge, user1 } = await loadFixture(deployBridgeFixture);
-            const amount = ethers.parseEther("10");
-
-            await expect(
-                bridge.connect(user1).addLiquidity({ value: amount })
-            ).to.be.reverted;
-        });
-
-        it("Should not allow non-admin to withdraw liquidity", async function () {
-            const { bridge, user1, user2 } = await loadFixture(deployBridgeFixture);
-            const amount = ethers.parseEther("10");
-
-            await expect(
-                bridge.connect(user1).withdrawLiquidity(user2.address, amount)
-            ).to.be.reverted;
-        });
-
-        it("Should revert withdraw if insufficient balance", async function () {
-            const { bridge, owner, user1 } = await loadFixture(deployBridgeFixture);
-            const balance = await bridge.getBalance();
-            const excessAmount = balance + ethers.parseEther("1");
-
-            await expect(
-                bridge.connect(owner).withdrawLiquidity(user1.address, excessAmount)
-            ).to.be.revertedWith("Insufficient balance");
-        });
-
-        it("Should accept native tokens via receive function", async function () {
-            const { bridge, user1 } = await loadFixture(deployBridgeFixture);
-            const amount = ethers.parseEther("5");
-
-            const balanceBefore = await bridge.getBalance();
-
-            await user1.sendTransaction({
-                to: await bridge.getAddress(),
-                value: amount
-            });
-
-            const balanceAfter = await bridge.getBalance();
-            expect(balanceAfter - balanceBefore).to.equal(amount);
+            expect(await bridge.getTotalPIOBridgeOut()).to.equal(initialLiquidity);
         });
     });
 
@@ -194,7 +126,7 @@ describe("PIONEBridge", function () {
             const amount = ethers.parseEther("1");
 
             const balanceBefore = await ethers.provider.getBalance(user1.address);
-            const bridgeBalanceBefore = await bridge.getBalance();
+            const bridgeBalanceBefore = await bridge.getTotalPIOBridgeOut();
 
             const tx = await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
             const receipt = await tx.wait();
@@ -203,7 +135,7 @@ describe("PIONEBridge", function () {
             const gasUsed = receipt.gasUsed * receipt.gasPrice;
 
             const balanceAfter = await ethers.provider.getBalance(user1.address);
-            const bridgeBalanceAfter = await bridge.getBalance();
+            const bridgeBalanceAfter = await bridge.getTotalPIOBridgeOut();
 
             // User balance should decrease by amount + gas
             expect(balanceBefore - balanceAfter).to.be.greaterThan(amount);
@@ -280,11 +212,8 @@ describe("PIONEBridge", function () {
 
             // Transfer up to daily limit
             const halfLimit = dailyLimit / 2n;
-
-            await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: halfLimit });
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: halfLimit });
 
-            
             // Should revert on next transfer
             await expect(
                 bridge.connect(user2).bridgeOut(user2.address, BSC_CHAIN_ID, { value: ethers.parseEther("1") })
@@ -296,7 +225,6 @@ describe("PIONEBridge", function () {
 
             const amount = dailyLimit/2n;
             // Use full daily limit
-            await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
 
             // Fast forward 1 day
@@ -335,9 +263,9 @@ describe("PIONEBridge", function () {
             const { bridge, user1, BSC_CHAIN_ID } = await loadFixture(deployBridgeFixture);
             const amount = ethers.parseEther("1");
 
-            const totalLockedBefore = await bridge.totalLocked();
+            const totalLockedBefore = await bridge.getTotalPIOBridgeOut();
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
-            const totalLockedAfter = await bridge.totalLocked();
+            const totalLockedAfter = await bridge.getTotalPIOBridgeOut();
 
             expect(totalLockedAfter - totalLockedBefore).to.equal(amount);
         });
@@ -366,14 +294,14 @@ describe("PIONEBridge", function () {
             );
 
             const balanceBefore = await ethers.provider.getBalance(user3.address);
-            const bridgeBalanceBefore = await bridge.getBalance();
+            const bridgeBalanceBefore = await bridge.getTotalPIOBridgeOut();
 
             await expect(bridge.connect(owner).bridgeIn(request, requestId))
                 .to.emit(bridge, "BridgeCompleted")
                 .withArgs(requestId, user3.address, amount, currentChainId);
 
             const balanceAfter = await ethers.provider.getBalance(user3.address);
-            const bridgeBalanceAfter = await bridge.getBalance();
+            const bridgeBalanceAfter = await bridge.getTotalPIOBridgeOut();
 
             expect(balanceAfter - balanceBefore).to.equal(amount);
             expect(bridgeBalanceBefore - bridgeBalanceAfter).to.equal(amount);
@@ -507,7 +435,7 @@ describe("PIONEBridge", function () {
 
         it("Should revert if insufficient liquidity", async function () {
             const { bridge, owner, user3, BSC_CHAIN_ID } = await loadFixture(deployBridgeFixture);
-            const bridgeBalance = await bridge.getBalance();
+            const bridgeBalance = await bridge.getTotalPIOBridgeOut();
             const excessAmount = bridgeBalance + ethers.parseEther("1");
 
             const request = {
@@ -552,9 +480,9 @@ describe("PIONEBridge", function () {
                 )
             );
 
-            const totalLockedBefore = await bridge.totalLocked();
+            const totalLockedBefore = await bridge.getTotalPIOBridgeOut();
             await bridge.connect(owner).bridgeIn(request, requestId);
-            const totalLockedAfter = await bridge.totalLocked();
+            const totalLockedAfter = await bridge.getTotalPIOBridgeOut();
 
             expect(totalLockedBefore - totalLockedAfter).to.equal(amount);
         });
@@ -641,23 +569,25 @@ describe("PIONEBridge", function () {
 
     describe("View Functions", function () {
         it("Should return correct remaining daily limit", async function () {
-            const { bridge, user1, BSC_CHAIN_ID, dailyLimit } = await loadFixture(deployBridgeFixture);
+            const { bridge, user1, BSC_CHAIN_ID, dailyLimit, initialLiquidity } = await loadFixture(deployBridgeFixture);
             const amount = ethers.parseEther("10");
 
-            expect(await bridge.getRemainingDailyLimit()).to.equal(dailyLimit);
+            const _afterInitLiquidity = dailyLimit - initialLiquidity;
+            expect(await bridge.getRemainingDailyLimit()).to.equal(_afterInitLiquidity);
 
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
 
-            expect(await bridge.getRemainingDailyLimit()).to.equal(dailyLimit - amount);
+            expect(await bridge.getRemainingDailyLimit()).to.equal(_afterInitLiquidity - amount);
         });
 
         it("Should reset remaining daily limit after 24 hours", async function () {
-            const { bridge, user1, BSC_CHAIN_ID, dailyLimit } = await loadFixture(deployBridgeFixture);
+            const { bridge, user1, BSC_CHAIN_ID, dailyLimit, initialLiquidity } = await loadFixture(deployBridgeFixture);
             const amount = ethers.parseEther("10");
 
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
-
-            expect(await bridge.getRemainingDailyLimit()).to.equal(dailyLimit - amount);
+            
+            const _afterInitLiquidity = dailyLimit - initialLiquidity;
+            expect(await bridge.getRemainingDailyLimit()).to.equal(_afterInitLiquidity - amount);
 
             await time.increase(86400);
 
@@ -665,20 +595,21 @@ describe("PIONEBridge", function () {
         });
 
         it("Should return correct daily transferred amount", async function () {
-            const { bridge, user1, BSC_CHAIN_ID } = await loadFixture(deployBridgeFixture);
+            const { bridge, user1, BSC_CHAIN_ID, dailyLimit, initialLiquidity } = await loadFixture(deployBridgeFixture);
             const amount = ethers.parseEther("10");
 
-            expect(await bridge.getDailyTransferred()).to.equal(0);
+            expect(await bridge.getDailyTransferred()).to.equal(initialLiquidity);
 
+            const _afterInitLiquidity = dailyLimit - initialLiquidity;
             await bridge.connect(user1).bridgeOut(user1.address, BSC_CHAIN_ID, { value: amount });
 
-            expect(await bridge.getDailyTransferred()).to.equal(amount);
+            expect(await bridge.getDailyTransferred()).to.equal(_afterInitLiquidity + amount);
         });
 
         it("Should return correct contract balance", async function () {
             const { bridge, initialLiquidity } = await loadFixture(deployBridgeFixture);
 
-            expect(await bridge.getBalance()).to.equal(initialLiquidity);
+            expect(await bridge.getTotalPIOBridgeOut()).to.equal(initialLiquidity);
         });
     });
 });

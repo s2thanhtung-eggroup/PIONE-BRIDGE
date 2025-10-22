@@ -51,7 +51,7 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     mapping(bytes32 => bool) private _processedTransactions;
 
     // Track total locked native tokens in the bridge
-    uint public totalLocked;
+    uint private _totalLocked;
 
     // Canonical representation of an incoming bridge request. This struct
     // carries the minimal set of fields needed to validate and release the
@@ -77,16 +77,10 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
 
     // Emitted when transfer policy limits are updated by an admin.
     event TransferLimitsUpdated(uint minAmount, uint maxAmount, uint dailyLimit);
-
-    // Emitted when admin deposits native tokens to the bridge for liquidity
-    event LiquidityAdded(address indexed provider, uint amount);
-
-    // Emitted when admin withdraws native tokens from the bridge
-    event LiquidityWithdrawn(address indexed recipient, uint amount);
     
     // ============ Errors ============
     /// @notice Emitted when a transfer amount is outside configured bounds
-    error InvalidAmount();
+    error InvalidAmount(uint minAmount, uint maxAmount, uint bridgeOutAmount);
     /// @notice Emitted when the operation would exceed the configured daily aggregate limit
     error DailyLimitExceeded();
     /// @notice Emitted when the provided bridge request data is malformed or does not match its id
@@ -110,6 +104,9 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
 
         // Enable a default external chain in the supported list. 
         setChainSupport(_chainSupport, true);
+
+        //Set paused, default on initialization
+        _pause();
     }
     
     /**
@@ -121,13 +118,18 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     ) external payable whenNotPaused nonReentrant returns (bytes32) {
         require(to != address(0), "Invalid recipient");
         require(supportedChains[targetChain], "Chain not supported");
-        require(msg.value > 0, "Amount must be greater than 0");
         
         uint amount = msg.value;
-        
+        require(amount > 0, "Amount must be greater than 0");
+
         // Check transfer limits
-        if(minTransferAmount > 0 && amount < minTransferAmount) revert InvalidAmount();
-        if(maxTransferAmount > 0 && amount > maxTransferAmount) revert InvalidAmount();
+        if (
+            (minTransferAmount > 0 && amount < minTransferAmount) ||
+            (maxTransferAmount > 0 && amount > maxTransferAmount)
+        ) {
+            revert InvalidAmount(minTransferAmount, maxTransferAmount, amount);
+        }
+        
         if(dailyLimit > 0) _updateDailyTransferred(amount);
         
         // Generate request ID
@@ -144,7 +146,7 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
             )
         );
         // Lock native tokens in the contract
-        totalLocked += amount;
+        _totalLocked += amount;
         
         emit BridgeInitiated(requestId, _sender, to, amount, CHAIN_ID, targetChain, nonce);
         return requestId;
@@ -159,7 +161,7 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     ) external onlyRole(OPERATOR_ROLE) whenNotPaused nonReentrant {
         require(request.targetChain == CHAIN_ID, "Wrong target chain");
         require(!_processedTransactions[requestId], "Already processed");
-        require(address(this).balance >= request.amount, "Insufficient liquidity");
+        require(_totalLocked >= request.amount, "Insufficient liquidity");
         
         // Verify request ID
         bytes32 computedId = keccak256(
@@ -176,7 +178,7 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
         _processedTransactions[requestId] = true;
 
         // Release native tokens to the recipient on this chain
-        totalLocked -= request.amount;
+        _totalLocked -= request.amount;
         
         (bool success, ) = payable(request.to).call{value: request.amount}("");
         require(success, "Transfer failed");
@@ -235,34 +237,6 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /**
-     * @notice Add liquidity to the bridge
-     */
-    function addLiquidity() external payable onlyRole(DEFAULT_ADMIN_ROLE) {
-        require(msg.value > 0, "Amount must be greater than 0");
-        totalLocked += msg.value;
-        emit LiquidityAdded(_msgSender(), msg.value);
-    }
-
-    /**
-     * @notice Withdraw liquidity from the bridge
-     */
-    function withdrawLiquidity(address payable to, uint amount) 
-        external 
-        onlyRole(DEFAULT_ADMIN_ROLE) 
-    {
-        require(to != address(0), "Invalid recipient");
-        require(amount > 0, "Amount must be greater than 0");   
-        require(address(this).balance >= amount, "Insufficient balance");
-        
-        totalLocked -= amount;
-        
-        (bool success, ) = to.call{value: amount}("");
-        require(success, "Transfer failed");
-        
-        emit LiquidityWithdrawn(to, amount);
-    }
-    
-    /**
      * @notice Pause bridge operations
      */
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {
@@ -292,24 +266,16 @@ contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
     }
 
     /** 
-     * @notice Returns the total amount of tokens transferred during the current day via the bridge.
+     * @notice Returns the total amount of PIO transferred during the current day via the bridge.
      */
     function getDailyTransferred() external view returns (uint) {
         return _dailyTransferred;
     }
 
     /**
-     * @notice Returns the current contract balance
+     * @notice Returns total PIO Bridge Out
      */
-    function getBalance() external view returns (uint) {
-        return address(this).balance;
-    }
-
-    /**
-     * @notice Fallback function to receive native tokens
-     */
-    receive() external payable {
-        totalLocked += msg.value;
-        emit LiquidityAdded(_msgSender(), msg.value);
+    function getTotalPIOBridgeOut() external view returns (uint) {
+        return _totalLocked;
     }
 }
