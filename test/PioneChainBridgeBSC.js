@@ -2,7 +2,7 @@ const { expect } = require("chai");
 const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
 
-describe("PIONEBridgeBSC", function () {
+describe("PioneChainBridgeBSC", function () {
   // Fixture để deploy contracts
   async function deployBridgeFixture() {
     const [owner, operator, user1, user2, user3] = await ethers.getSigners();
@@ -20,7 +20,7 @@ describe("PIONEBridgeBSC", function () {
     const maxTransfer = ethers.parseEther("100000");
     const dailyLimit = ethers.parseEther("100000");
 
-    const Bridge = await ethers.getContractFactory("PIONEBridgeBSC");
+    const Bridge = await ethers.getContractFactory("PioneChainBridgeBSC");
     const bridge = await Bridge.deploy(
       await pioToken.getAddress(),
       minTransfer,
@@ -35,7 +35,7 @@ describe("PIONEBridgeBSC", function () {
     await pioToken.unpauseTokenBridge();
 
     // Mint tokens to users using crosschainMint (simulate previous bridge transfers)
-    const tempBridge = await ethers.getContractFactory("PIONEBridgeBSC");
+    const tempBridge = await ethers.getContractFactory("PioneChainBridgeBSC");
     const initialBridge = await tempBridge.deploy(
       await pioToken.getAddress(),
       0, 0, 0, BSC_TESTNET_ID
@@ -132,7 +132,7 @@ describe("PIONEBridgeBSC", function () {
 
     it("Should revert with zero token address", async function () {
       const { owner, minTransfer, maxTransfer, dailyLimit } = await loadFixture(deployBridgeFixture);
-      const Bridge = await ethers.getContractFactory("PIONEBridgeBSC");
+      const Bridge = await ethers.getContractFactory("PioneChainBridgeBSC");
       
       await expect(
         Bridge.deploy(ethers.ZeroAddress, minTransfer, maxTransfer, dailyLimit, 97)

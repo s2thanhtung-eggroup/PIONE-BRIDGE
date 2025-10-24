@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 /**
- * @title PIONE Bridge
+ * @title Pione Chain Bridge
  * @dev Cross-chain bridge for native tokens (PIO).
  * 
  * Features:
@@ -22,7 +22,7 @@ import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-contract PIONEBridge is AccessControl, Pausable, ReentrancyGuard {
+contract PioneChainBridge is AccessControl, Pausable, ReentrancyGuard {
     // Role used to authorize off-chain operators who can finalize incoming
     // cross-chain requests (i.e. release tokens on this chain after verification).
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");

@@ -4,7 +4,7 @@ const { loadFixture } = require("@nomicfoundation/hardhat-toolbox/network-helper
 
 describe("PIONE", function () {
   // Constants
-  const TOKEN_NAME = "Pione";
+  const TOKEN_NAME = "Pione Chain";
   const TOKEN_SYMBOL = "PIO";
   const MAX_SUPPLY = ethers.parseEther("666666666");
 

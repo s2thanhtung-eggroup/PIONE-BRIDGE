@@ -48,10 +48,10 @@ contract PIONE is
     constructor(
         address _initialOwner
     )
-        ERC20("Pione", "PIO")
+        ERC20("Pione Chain", "PIO")
         Ownable(_initialOwner)
-        ERC20Permit("Pione")
-    {
+        ERC20Permit("Pione Chain")
+    {   
         // Set to true by default during contract initialization to disable bridge operations
         _tokenBridgePaused = true;
     }

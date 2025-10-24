@@ -2,7 +2,7 @@
 pragma solidity ^0.8.28;
 
 /**
- * @title PIONE Bridge BSC
+ * @title Pione Chain Bridge on BSC
  * @dev Cross-chain bridge for PIO tokens with role-based access control
  * 
  * Features:
@@ -22,7 +22,7 @@ import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {IPIONE} from "./interfaces/IPIONE.sol";
 
-contract PIONEBridgeBSC is AccessControl, Pausable, ReentrancyGuard {
+contract PioneChainBridgeBSC is AccessControl, Pausable, ReentrancyGuard {
     // Role used to authorize off-chain operators who can finalize incoming
     // cross-chain requests (i.e. mint tokens on this chain).
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");

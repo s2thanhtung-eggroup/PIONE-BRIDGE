@@ -3,21 +3,17 @@
 
 const { buildModule } = require("@nomicfoundation/hardhat-ignition/modules");
 const { ethers } = require("hardhat");
-require('dotenv').config();
 
-const PIONE_TOKEN = process.env.PIONE_TOKEN || "";
-
-module.exports = buildModule("PIONEBridgeBSC_modules", (m) => {
+module.exports = buildModule("PioneChainBridge_modules", (m) => {
 
   const minTransfer = ethers.parseEther("1"); // 1 PIO
-  const maxTransfer = ethers.parseEther("10000"); // 10K PIO
-  const dailyLimit = ethers.parseEther("1000000"); // 1M PIO
-  const chainSupport = 5090; // BSC 56 => Pione 5090
+  const maxTransfer = ethers.parseEther("0"); // 0 PIO => unlimit
+  const dailyLimit = ethers.parseEther("0"); // 0 PIO => unlimit
+  const chainSupport = 56; // Pione 5090 => BSC 56
 
   const bridge = m.contract(
-      "PIONEBridgeBSC", 
+      "PioneChainBridge", 
       [
-        PIONE_TOKEN,
         minTransfer,
         maxTransfer,
         dailyLimit,

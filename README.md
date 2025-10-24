@@ -45,7 +45,7 @@ npm run token:deploy-bsc
 Record the deployed token address — it will be needed in the next step.
 
 
-### 1. Deploy PIONEBridgeBSC contract on BSC: 
+### 1. Deploy PioneChainBridgeBSC contract on BSC: 
 
 Deploy the bridge contract to BNB Smart Chain:
 require set: PIONE_TOKEN=<PIONE_TOKEN_ADDRESS> in .env before run
@@ -56,7 +56,7 @@ npm run deploy:bsc
 **If verify fails, run one more time.**
 
 
-### 2. Deploy PIONEBridge contract on PioneChain:
+### 2. Deploy PioneChainBridge contract on PioneChain:
 
 Deploy the bridge contract on PioneChain:
 

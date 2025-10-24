@@ -3,7 +3,7 @@ const { ethers } = require("hardhat");
 const { loadFixture, time } = require("@nomicfoundation/hardhat-network-helpers");
 const { anyValue } = require("@nomicfoundation/hardhat-chai-matchers/withArgs");
 
-describe("PIONEBridge", function () {
+describe("PioneChainBridge", function () {
     // Fixture để deploy contracts
     async function deployBridgeFixture() {
         const [owner, operator, user1, user2, user3] = await ethers.getSigners();
@@ -16,7 +16,7 @@ describe("PIONEBridge", function () {
         const maxTransfer = ethers.parseEther("500"); // 500 PIO
         const dailyLimit = ethers.parseEther("1000"); // 1000 PIO
 
-        const Bridge = await ethers.getContractFactory("PIONEBridge");
+        const Bridge = await ethers.getContractFactory("PioneChainBridge");
         const bridge = await Bridge.deploy(
             minTransfer,
             maxTransfer,
