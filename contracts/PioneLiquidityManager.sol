@@ -1,21 +1,17 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.0;
 
-import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
-import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { IPancakeFactory } from "./interfaces/IPancakeFactory.sol";
 import { IPancakeRouter02 } from "./interfaces/IPancakeRouter02.sol";
-import { IPioneChainBridge } from "./interfaces/IPioneChainBridge.sol";
 import { IPancakePair } from "./interfaces/IPancakePair.sol";
+import { IPioneChainBridge } from "./interfaces/IPioneChainBridge.sol";
 import { IPinkLock } from "./interfaces/IPinkLock.sol";
 
-
-interface IUniswapV2Factory {
-    function getPair(address tokenA, address tokenB) external view returns (address pair);
-}
-
+import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import { AccessControl } from "@openzeppelin/contracts/access/AccessControl.sol";
+import { ReentrancyGuard } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import { Pausable } from "@openzeppelin/contracts/utils/Pausable.sol";
 
 contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
 
@@ -25,9 +21,9 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
     bytes32 public constant MANAGER_ROLE = keccak256("MANAGER_ROLE");
     address public immutable PIONE_TOKEN;
     address public immutable USDT_TOKEN;
-    address public PIONE_BRIDGE;
-    address public PINK_LOCK;
-
+    address public immutable LP_PAIR;
+    address public immutable POOL_LOCK;
+    address public pioneBridge;
 
     struct Transaction {
         uint256 pioAmount;
@@ -35,6 +31,7 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         uint256 liquidityAmount;
         bool depositUSDT;
         uint256 pinkLockId;
+        uint256 lockMonths;
     }
     
     struct UserInfo {
@@ -45,10 +42,9 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         mapping(bytes32 requestId => uint256) _positions;
     }
 
-    // {"l":"PIO LP Locker `6 kí tư cuối ví user`"}
-    uint256 private _lockTimePeriod;
+    uint256 private _minClaimPIOAmount;
     mapping(address => UserInfo) private _userData;
-    mapping(bytes32 => bool) private _usedRequestIds;
+    mapping(bytes32 => address) private _usedRequestIds;
 
     event UserDepositUSDT(bytes32 indexed requestId, address indexed user, uint256 amount);
     event BridgeCompleted(bytes32 indexed requestId, address indexed user, uint256 index);
@@ -58,7 +54,7 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
     event LiquidityAdded(
         address indexed user,
         bytes32 indexed requestId,
-        uint256 pioneAmount,
+        uint256 pioAmount,
         uint256 usdtAmount,
         uint256 liquidity,
         uint256 slippage
@@ -70,7 +66,8 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         uint256 liquidity,
         uint256 unlockDate
     );
-    event EmergencyWithdraw(address indexed token, uint256 amount);
+    event UpdatedMinClaimPIOAmount(uint256 oldAmount, uint256 newAmount);
+    event PioneBridgeUpdated(address indexed oldAddress, address indexed newAddress);
     
     modifier onlyOwner() {
         require(hasRole(DEFAULT_ADMIN_ROLE, msg.sender), "Not owner");
@@ -81,22 +78,25 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         require(hasRole(MANAGER_ROLE, msg.sender), "Not manager");
         _;
     }
-    
+
     modifier canDeposit(bytes32 _requestId) {
-        require(_usedRequestIds[_requestId], "RequestId does not exist");
+        require(_usedRequestIds[_requestId] != address(0), "RequestId does not exist");
+        require(_usedRequestIds[_requestId] == msg.sender, "Not the owner of this request");
         UserInfo storage user = _userData[msg.sender];
         uint256 position = user._positions[_requestId];
-
+        require(position < user.transactions.length, "Invalid transaction");
         require(user.transactions[position].usdtAmount > 0, "Invalid transaction");
         require(!user.transactions[position].depositUSDT, "Already deposited USDT");
         _;
     }
 
     modifier canExecuted(bytes32 _requestId, address account) {
-        require(_usedRequestIds[_requestId], "RequestId does not exist");
+        require(_usedRequestIds[_requestId] != address(0), "RequestId does not exist");
+        require(_usedRequestIds[_requestId] == account, "Not the owner of this request");
         UserInfo storage user = _userData[account];
         uint256 position = user._positions[_requestId];
-
+        require(position < user.transactions.length, "Invalid transaction");
+        require(user.transactions[position].usdtAmount > 0, "Invalid transaction");
         require(user.transactions[position].liquidityAmount == 0, "Additional liquidity request made");
         require(user.transactions[position].depositUSDT, "USDT not provided yet");
         _;
@@ -105,31 +105,44 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
     constructor(
         address _pioneToken,
         address _usdtToken,
-        address _pioneBridge
+        address _pioneBridge,
+        address _router,
+        address _pinklock
     ) {
-        require(_pioneToken != address(0), "Invalid PIONE address");
-        require(_usdtToken != address(0), "Invalid USDT address");
+        require(
+            _pioneToken != address(0) && _usdtToken != address(0) &&
+            _router != address(0) && _pinklock != address(0),
+            "Invalid address"
+        );
         PIONE_TOKEN = _pioneToken;
         USDT_TOKEN = _usdtToken;
-        PIONE_BRIDGE = _pioneBridge;
-        PINK_LOCK = 0x407993575c91ce7643a4d4cCACc9A98c36eE1BBE;
-
-        _lockTimePeriod = 30 days * 6; // default 6 months
-        router = IPancakeRouter02(0x10ED43C718714eb63d5aA57B78B54704E256024E);
-        IERC20(PIONE_TOKEN).approve(address(router), type(uint256).max);
-        IERC20(USDT_TOKEN).approve(address(router), type(uint256).max);
+        POOL_LOCK = _pinklock;
+        router = IPancakeRouter02(_router);
+        LP_PAIR = IPancakeFactory(router.factory()).getPair(PIONE_TOKEN, USDT_TOKEN);
+        require(LP_PAIR != address(0), "LP pair does not exist");
+        _approveRouter(_router, type(uint256).max);
 
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
         _grantRole(MANAGER_ROLE, msg.sender);
+        pioneBridge = _pioneBridge;
+        _minClaimPIOAmount = 1 * 10**18; // default 1 PIO
     }
     
-    function handleBridgeCompleted(bytes32 requestId, address account, uint256 amountPIO, uint256 amountUSDT)
+    // Handle completed bridge transaction and create liquidity request
+    function handleBridgeCompleted(
+        bytes32 requestId,
+        address account,
+        uint256 amountPIO,
+        uint256 amountUSDT,
+        uint256 lockMonths
+    )
         external
         onlyManager
         whenNotPaused
     {
-        require(IPioneChainBridge(PIONE_BRIDGE).processedTransactions(requestId), "Transaction not completed");
-        require(!_usedRequestIds[requestId], "RequestId already set");
+        require(IPioneChainBridge(pioneBridge).processedTransactions(requestId), "Transaction not completed");
+        require(_usedRequestIds[requestId] == address(0), "RequestId already set");
+        require(lockMonths > 0, "Lock months must be greater than 0");
 
         UserInfo storage userInfo = _userData[account];
         Transaction memory newTransaction = Transaction({
@@ -137,9 +150,10 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
             usdtAmount: amountUSDT,
             liquidityAmount: 0,
             depositUSDT: false,
-            pinkLockId: 0
+            pinkLockId: 0,
+            lockMonths: lockMonths
         });
-        _usedRequestIds[requestId] = true;
+        _usedRequestIds[requestId] = account;
 
         uint256 index = userInfo.transactions.length;
         userInfo._positions[requestId] = index;
@@ -149,49 +163,132 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         emit BridgeCompleted(requestId, account, index);
     }
     
+    // Deposit USDT for a liquidity request
     function depositUSDT(bytes32 requestId)
         external
         nonReentrant
         whenNotPaused
         canDeposit(requestId)
+        returns (bool)
     {
         UserInfo storage user = _userData[msg.sender];
         uint256 position = user._positions[requestId];
         uint256 usdtAmount = user.transactions[position].usdtAmount;
 
-        // Transfer USDT từ user vào contract
         IERC20(USDT_TOKEN).safeTransferFrom(msg.sender, address(this), usdtAmount);
-
         user.transactions[position].depositUSDT = true;
         user.usdtBalance += usdtAmount;
 
         emit UserDepositUSDT(requestId, msg.sender, usdtAmount);
+        return true;
     }
     
+    // Add liquidity to PancakeSwap and lock LP tokens
     function addLiquidity(
         bytes32 requestId,
-        address account,
         uint256 slippagePercent
-    ) external onlyManager whenNotPaused canExecuted(requestId, account) {
-        UserInfo storage user = _userData[account];
+    ) external whenNotPaused canExecuted(requestId, msg.sender) returns (bool) {
+        UserInfo storage user = _userData[msg.sender];
         uint256 position = user._positions[requestId];
 
-        require(slippagePercent <= 50, "Slippage too high");
+        require(slippagePercent <= 90, "Slippage too high");
         (uint256 pioAmount, uint256 usdtAmount) = _validateAndGetAmounts(user, position);
-        // Add liquidity và nhận LP tokens
         uint256 liquidity = _executeAddLiquidity(
             user,
             position,
             pioAmount,
             usdtAmount,
             slippagePercent,
-            account,
+            msg.sender,
             requestId
         );
 
-        _lockLPTokens(user, position, liquidity, account, requestId);
+        _lockLPTokens(user, position, liquidity, msg.sender, requestId);
+        return true;
+    }
+    
+    // Claim USDT balance
+    function claimUSDT(uint256 amount) external nonReentrant whenNotPaused returns (bool) {
+        require(amount > 0, "invalid amount");
+        UserInfo storage user = _userData[msg.sender];
+        require(user.usdtBalance >= amount, "Insufficient balance USDT");
+        user.usdtBalance -= amount;
+
+        IERC20(USDT_TOKEN).safeTransfer(msg.sender, amount);
+
+        emit ClaimedUSDT(msg.sender, amount);
+        return true;
     }
 
+    // Claim PIO balance and bridge back to Pione Chain
+    function claimPioToPioneChain(uint256 amount) external nonReentrant whenNotPaused returns (bool) {
+        require(amount > 0, "Amount PIO must be > 0");
+        require(amount >= _minClaimPIOAmount, "Amount below minimum");
+        UserInfo storage user = _userData[msg.sender];
+        require(user.pioBalance >= amount, "Insufficient balance PIO");
+        user.pioBalance -= amount;
+
+        bytes32 requestId = IPioneChainBridge(pioneBridge).bridgeOut(msg.sender, amount, 5080);
+
+        emit ClaimedPIOtoPioneChain(requestId, msg.sender, amount);
+        return true;
+    }
+
+    // Calculate optimal USDT amount for given PIO amount
+    function getOptimalAmountUSDT(uint256 pioAmount) external view returns (uint256 optimalUsdtAmount) {
+        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
+        optimalUsdtAmount = router.quote(pioAmount, reservePione, reserveUsdt);
+    }
+
+    // Calculate optimal PIO amount for given USDT amount
+    function getOptimalAmountPIO(uint256 usdtAmount) external view returns (uint256 optimalPioAmount) {
+        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
+        optimalPioAmount = router.quote(usdtAmount, reserveUsdt, reservePione);
+    }
+
+    // Preview liquidity addition with refund amounts
+    function previewAddLiquidity(uint256 pioneAmount, uint256 usdtAmount)
+        external
+        view
+        returns (
+            uint256 actualPioAmount,
+            uint256 actualUsdtAmount,
+            uint256 estimatedLiquidity,
+            uint256 refundPio,
+            uint256 refundUsdt
+        )
+    {
+        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
+        uint256 optimalUsdt = router.quote(pioneAmount, reservePione, reserveUsdt);
+
+        if (optimalUsdt <= usdtAmount) {
+            actualPioAmount = pioneAmount;
+            actualUsdtAmount = optimalUsdt;
+            refundUsdt = usdtAmount - optimalUsdt;
+            refundPio = 0;
+        } else {
+            uint256 optimalPio = router.quote(usdtAmount, reserveUsdt, reservePione);
+            actualPioAmount = optimalPio;
+            actualUsdtAmount = usdtAmount;
+            refundPio = pioneAmount - optimalPio;
+            refundUsdt = 0;
+        }
+
+        // Estimate liquidity tokens
+        uint256 totalSupply = IPancakePair(LP_PAIR).totalSupply();
+        estimatedLiquidity = (actualPioAmount * totalSupply) / reservePione;
+    }
+
+    // Get current LP reserves for USDT and PIO
+    function getReserves() public view returns(uint256 reserveUsdt, uint256 reservePione) {
+        (uint256 reserve0, uint256 reserve1,) = IPancakePair(LP_PAIR).getReserves();
+        address token0 = IPancakePair(LP_PAIR).token0();
+        (reserveUsdt, reservePione) = token0 == USDT_TOKEN
+            ? (reserve0, reserve1)
+            : (reserve1, reserve0);
+    }
+
+    // Execute liquidity addition to PancakeSwap
     function _executeAddLiquidity(
         UserInfo storage user,
         uint256 position,
@@ -203,8 +300,6 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
     ) private returns (uint256 liquidity) {
         uint256 amountPioMin = pioAmount * (100 - slippagePercent) / 100;
         uint256 amountUsdtMin = usdtAmount * (100 - slippagePercent) / 100;
-
-        // Deduct balances first
         user.pioBalance -= pioAmount;
         user.usdtBalance -= usdtAmount;
 
@@ -227,10 +322,10 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         if (usdtAmount > amountB) user.usdtBalance += (usdtAmount - amountB);
 
         emit LiquidityAdded(account, requestId, amountA, amountB, liquidityAmount, slippagePercent);
-        
         return liquidityAmount;
     }
 
+    // Validate and get token amounts for transaction
     function _validateAndGetAmounts(UserInfo storage user, uint256 position)
         private
         view
@@ -243,6 +338,7 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         require(user.usdtBalance >= usdtAmount, "Insufficient USDT");
     }
 
+    // Lock LP tokens in PinkLock
     function _lockLPTokens(
         UserInfo storage user,
         uint256 position,
@@ -250,141 +346,40 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
         address account,
         bytes32 requestId
     ) private {
-        address lpToken = IUniswapV2Factory(router.factory()).getPair(PIONE_TOKEN, USDT_TOKEN);
-        require(lpToken != address(0), "LP token not found");
+        IERC20(LP_PAIR).approve(POOL_LOCK, liquidity);
 
-        // Approve and lock
-        IERC20(lpToken).approve(PINK_LOCK, liquidity);
-        
-        uint256 unlockDate = block.timestamp + _lockTimePeriod;
-        string memory description = string(abi.encodePacked("PIO LP Locker ", _getLastSixChars(account)));
+        uint256 unlockDate = block.timestamp + (30 days * user.transactions[position].lockMonths);
+        string memory description = string(abi.encodePacked('{"l": "PIO LP Locker ', _getLastSixChars(account), '"}'));
 
-        uint256 lockId = IPinkLock(PINK_LOCK).lock(
+        uint256 lockId = IPinkLock(POOL_LOCK).lock(
             account,
-            lpToken,
+            LP_PAIR,
             true,
             liquidity,
             unlockDate,
             description
         );
-
         user.transactions[position].pinkLockId = lockId;
 
         emit LiquidityLocked(account, requestId, lockId, liquidity, unlockDate);
     }
-    
-    function claimUSDT(uint256 amount) external nonReentrant whenNotPaused returns (bool) {
 
-        require(amount > 0, "invalid amount");
-        UserInfo storage user = _userData[msg.sender];
-        require(user.usdtBalance >= amount, "Insufficient balance USDT");
-        user.usdtBalance -= amount;
-
-        // Transfer USDT từ contract về ví user
-        IERC20(USDT_TOKEN).safeTransfer(msg.sender, amount);
-
-        emit ClaimedUSDT(msg.sender, amount);
-        return true;
-    }
-
-     function claimPIOtoPionChain(uint256 amount) external nonReentrant whenNotPaused returns (bool) {
-
-        require(amount > 0, "Amount PIO must be > 0");
-        UserInfo storage user = _userData[msg.sender];
-        require(user.pioBalance >= amount, "Insufficient balance PIO");
-        user.pioBalance -= amount;
-
-        bytes32 requestId = IPioneChainBridge(PIONE_BRIDGE).bridgeOut(msg.sender, amount, 5090);
-
-        emit ClaimedPIOtoPioneChain(requestId, msg.sender, amount);
-        return true;
-    }
-
-    function getOptimalAmountPIO(uint256 pioAmount) external view returns (uint256 optimalUsdtAmount) {
-        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
-        optimalUsdtAmount = router.quote(pioAmount, reservePione, reserveUsdt);
-    }
-
-    function getOptimalAmountUSDT(uint256 usdtAmount) external view returns (uint256 optimalPioAmount) {
-        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
-        optimalPioAmount = router.quote(usdtAmount, reserveUsdt, reservePione);
-    }
-
-    function previewAddLiquidity(uint256 pioneAmount, uint256 usdtAmount)
-        external
-        view
-        returns (
-            uint256 actualPioAmount,
-            uint256 actualUsdtAmount,
-            uint256 estimatedLiquidity,
-            uint256 refundPio,
-            uint256 refundUsdt
-        )
-    {
-        address pair = IUniswapV2Factory(router.factory()).getPair(PIONE_TOKEN, USDT_TOKEN);
-        require(pair != address(0), "Pair does not exist");
-        (uint256 reserveUsdt, uint256 reservePione) = getReserves();
-        uint256 optimalUsdt = router.quote(pioneAmount, reservePione, reserveUsdt);
-
-        if (optimalUsdt <= usdtAmount) {
-            actualPioAmount = pioneAmount;
-            actualUsdtAmount = optimalUsdt;
-            refundUsdt = usdtAmount - optimalUsdt;
-            refundPio = 0;
-        } else {
-            uint256 optimalPio = router.quote(usdtAmount, reserveUsdt, reservePione);
-            actualPioAmount = optimalPio;
-            actualUsdtAmount = usdtAmount;
-            refundPio = pioneAmount - optimalPio;
-            refundUsdt = 0;
-        }
-
-        // Estimate liquidity tokens
-        uint256 totalSupply = IPancakePair(pair).totalSupply();
-        estimatedLiquidity = (actualPioAmount * totalSupply) / reservePione;
-    }
-
-    function getReserves() public view returns(uint256 reserveUsdt, uint256 reservePione) {
-        address pair = IUniswapV2Factory(router.factory()).getPair(PIONE_TOKEN, USDT_TOKEN);
-        require(pair != address(0), "Pair does not exist");
-
-        (uint256 reserve0, uint256 reserve1,) = IPancakePair(pair).getReserves();
-        address token0 = IPancakePair(pair).token0();
-        (reserveUsdt, reservePione) = token0 == USDT_TOKEN
-            ? (reserve0, reserve1)
-            : (reserve1, reserve0);
-    }
-
-    /**
-     * @dev Helper function để lấy 6 ký tự cuối của địa chỉ
-     */
-    function _getLastSixChars(address addr) internal pure returns (string memory) {
-        bytes memory addrBytes = abi.encodePacked(addr);
+    // Get last 6 hex characters of address
+    function _getLastSixChars(address account) internal pure returns (string memory) {
+        bytes memory hexChars = "0123456789abcdef";
         bytes memory result = new bytes(6);
 
-        for (uint i = 0; i < 6; i++) {
-            result[i] = addrBytes[i + 14];
+        uint160 addr = uint160(account);
+        for (uint i = 0; i < 3; i++) {
+            uint8 byteValue = uint8(addr >> (8 * (2 - i)));
+            result[i * 2] = hexChars[byteValue >> 4];
+            result[i * 2 + 1] = hexChars[byteValue & 0x0f];
         }
-
-        return _bytesToHexString(result);
+        return string(result);
     }
 
-    /**
-     * @dev Convert bytes to hex string
-     */
-    function _bytesToHexString(bytes memory data) internal pure returns (string memory) {
-        bytes memory hexChars = "0123456789abcdef";
-        bytes memory str = new bytes(data.length * 2);
-
-        for (uint i = 0; i < data.length; i++) {
-            str[i * 2] = hexChars[uint8(data[i] >> 4)];
-            str[i * 2 + 1] = hexChars[uint8(data[i] & 0x0f)];
-        }
-
-        return string(str);
-    }
-
-    function getTransactionInfo(bytes32 requestId, address account)
+    // Get transaction information by request ID
+    function getTransactionInfo(bytes32 requestId)
         external
         view
         returns (
@@ -393,19 +388,15 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
             uint256 liquidityAmount,
             bool _depositUSDT,
             uint256 pinkLockId,
-            uint256 userPioBalance,
-            uint256 userUsdtBalance
+            uint256 lockMonths
         )
     {
-        // Validate requestId exists
-        require(_usedRequestIds[requestId], "RequestId does not exist");
-
+        require(_usedRequestIds[requestId] != address(0), "RequestId does not exist");
+        address account = _usedRequestIds[requestId];
         UserInfo storage user = _userData[account];
         uint256 position = user._positions[requestId];
 
-        // Validate position bounds
         require(position < user.transactions.length, "Invalid position");
-
         Transaction storage txn = user.transactions[position];
 
         return (
@@ -414,67 +405,72 @@ contract PioneLiquidityManager is AccessControl, Pausable, ReentrancyGuard {
             txn.liquidityAmount,
             txn.depositUSDT,
             txn.pinkLockId,
+            txn.lockMonths
+        );
+    }
+
+    // Get user's PIO and USDT balances
+    function getUserBalances(address account) external view returns (uint256 pioBalance, uint256 usdtBalance) {
+        UserInfo storage user = _userData[account];
+        return (
             user.pioBalance,
             user.usdtBalance
         );
     }
-    
+
     /**
-     * @dev Pause contract - chỉ owner có thể gọi
+     * @dev Get the owner address of a requestId
+     * @param requestId The requestId to check
+     * @return The address that owns this requestId, or address(0) if not used
      */
+    function getRequestIdOwner(bytes32 requestId) external view returns (address) {
+        return _usedRequestIds[requestId];
+    }
+
+    /**
+     * @dev Set minimum claim PIO amount
+     * @param minAmount Minimum amount of PIO tokens that can be claimed
+     */
+    function setMinClaimPIOAmount(uint256 minAmount) external onlyOwner {
+        require(minAmount > 0, "Min amount must be greater than 0");
+        emit UpdatedMinClaimPIOAmount(_minClaimPIOAmount, minAmount);
+        _minClaimPIOAmount = minAmount;
+    }
+
+    /**
+     * @dev Get minimum claim PIO amount
+     * @return Minimum amount of PIO tokens that can be claimed
+     */
+    function getMinClaimPIOAmount() external view returns (uint256) {
+        return _minClaimPIOAmount;
+    }
+
+    /**
+     * @dev Set PioneBridge address
+     */
+    function setPioneBridge(address _pioneBridge) public onlyOwner {
+        require(_pioneBridge != address(0), "Invalid PioneBridge address");
+        emit PioneBridgeUpdated(pioneBridge, _pioneBridge);
+        pioneBridge = _pioneBridge;
+    }
+
+    /**
+     * @dev Approve router to spend PIONE and USDT tokens
+     * @param _router Router address to approve
+     */
+    function _approveRouter(address _router, uint256 value) private returns (bool) {
+        IERC20(PIONE_TOKEN).approve(_router, value);
+        IERC20(USDT_TOKEN).approve(_router, value);
+        return true;
+    }
+
+    // Pause contract
     function pause() external onlyOwner {
         _pause();
     }
 
-    /**
-     * @dev Unpause contract - chỉ owner có thể gọi
-     */
+    // Unpause contract
     function unpause() external onlyOwner {
         _unpause();
-    }
-
-    function setLockTimePeriod(uint256 timePeriod) external onlyOwner {
-        require(timePeriod > 0, "Time period must be greater than 0");
-        _lockTimePeriod = timePeriod;
-    }
-
-    /**
-     * @dev Get current lock time period
-     * @return Current lock time period in seconds
-     */
-    function getLockTimePeriod() external view returns (uint256) {
-        return _lockTimePeriod;
-    }
-
-    /**
-     * @dev Emergency withdraw cho owner
-     */
-    function emergencyWithdraw(address token, address to) external onlyOwner {
-        require(to != address(0), "Invalid recipient");
-        uint256 balance = IERC20(token).balanceOf(address(this));
-        require(balance > 0, "No balance");
-
-        // Safe transfer for emergency withdrawal
-        IERC20(token).safeTransfer(to, balance);
-
-        emit EmergencyWithdraw(token, balance);
-    }
-
-    /**
-     * @dev Set router address - for testing purposes only
-     */
-    function setRouter(address _router) external onlyOwner {
-        require(_router != address(0), "Invalid router address");
-        router = IPancakeRouter02(_router);
-        IERC20(PIONE_TOKEN).approve(_router, type(uint256).max);
-        IERC20(USDT_TOKEN).approve(_router, type(uint256).max);
-    }
-
-    /**
-     * @dev Set PinkLock address - for testing purposes only
-     */
-    function setPinkLock(address _pinkLock) external onlyOwner {
-        require(_pinkLock != address(0), "Invalid PinkLock address");
-        PINK_LOCK = _pinkLock;
     }
 }

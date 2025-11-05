@@ -1,0 +1,12 @@
+
+
+1. up BridgeBSC: 
+npx hardhat ignition deploy ./ignition/modules/PioneChainBridgeBSC.js --network bscTestnet --verify
+
+2. up PinkLock:
+npx hardhat ignition deploy ./ignition/modules/PinkLock.js --network bscTestnet --verify
+
+3. LiquidityManager:
+npx hardhat ignition deploy ./ignition/modules/PioneLiquidityManager.js --network bscTestnet --verify
+
+

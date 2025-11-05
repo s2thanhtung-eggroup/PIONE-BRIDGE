@@ -20,6 +20,15 @@ module.exports = {
           viaIR: true,
         },
       },
+      {
+        version: "0.8.4",
+        settings: {
+          optimizer: {
+            enabled: true,
+            runs: 200,
+          },
+        },
+      },
     ]
   },
   networks: {
@@ -55,10 +64,10 @@ module.exports = {
     }
   },
   etherscan: {
-    // apiKey: EXPLORER_API_KEY,
-    apiKey: {
-      pioneZero : EXPLORER_API_KEY
-    },
+    apiKey: EXPLORER_API_KEY,
+    // apiKey: {
+    //   pioneZero : EXPLORER_API_KEY
+    // },
     customChains: [
       {
         network: "pione",
